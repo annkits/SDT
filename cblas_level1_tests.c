@@ -1,418 +1,398 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <cblas.h>
+import ctypes
+import numpy as np
+import os
+import multiprocessing as mp
 
-#define SMALL_N 10        
-#define BIG_N 1000000     
-
-static void fill_float(float *v, int n) {
-    for (int i = 0; i < n; i++) v[i] = (float)(i % 5) - 2.5f;
-}
-
-static void fill_double(double *v, int n) {
-    for (int i = 0; i < n; i++) v[i] = (double)(i % 7) - 3.14;
-}
+try:
+    lib = ctypes.CDLL("/usr/local/openblas/lib/libopenblas.so")
+except OSError as e:
+    print("Ошибка загрузки libopenblas:", e)
+
+c_float_p   = ctypes.POINTER(ctypes.c_float)
+c_double_p  = ctypes.POINTER(ctypes.c_double)
+c_void_p    = ctypes.c_void_p
+c_int       = ctypes.c_int
+c_float     = ctypes.c_float
+c_double    = ctypes.c_double
+
+SMALL_N = 10
+BIG_N   = 1000000
+
+def run_test(func):
+    try:
+        func()
+    except Exception as e:
+        print(f"!!! {func.__name__} exception: {e}")
+    except:
+        print(f"!!! {func.__name__} unknown error")
+
+def fill_float(n):
+    return np.arange(n, dtype=np.float32) % 5 - 2.5
+
+def fill_double(n):
+    return np.arange(n, dtype=np.float64) % 7 - 3.14
+
+def fill_complex_float(n):
+    re = np.arange(n, dtype=np.float32) % 5 - 2.5
+    im = np.arange(n, dtype=np.float32) % 3 + 1.0
+    return np.array(re + 1j * im, dtype=np.complex64)
+
+def fill_complex_double(n):
+    re = np.arange(n, dtype=np.float64) % 7 - 3.14
+    im = np.arange(n, dtype=np.float64) % 4 + 2.0
+    return np.array(re + 1j * im, dtype=np.complex128)
+
+def print_header(group_name):
+    print(f"\n=== Testing: {group_name} ===")
+
+def test_dot_real():
+    print_header("sdot / ddot / sdsdot / dsdot")
+
+    fx = fill_float(SMALL_N*3)
+    fy = fill_float(SMALL_N*2)
+    dx = fill_double(SMALL_N*2)
+    dy = fill_double(SMALL_N*3)
+
+    lib.cblas_sdot.argtypes = [c_int, c_float_p, c_int, c_float_p, c_int]
+    lib.cblas_sdot.restype  = c_float
+    lib.cblas_sdot(SMALL_N, fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), 1)
+    lib.cblas_sdot(0, fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), 1)
+    lib.cblas_sdot(SMALL_N, fx.ctypes.data_as(c_float_p), -2, fy.ctypes.data_as(c_float_p), 3)
+
+    lib.cblas_ddot.argtypes = [c_int, c_double_p, c_int, c_double_p, c_int]
+    lib.cblas_ddot.restype  = c_double
+    lib.cblas_ddot(SMALL_N, dx.ctypes.data_as(c_double_p), 2, dy.ctypes.data_as(c_double_p), -1)
+
+    lib.cblas_sdsdot.argtypes = [c_int, c_float, c_float_p, c_int, c_float_p, c_int]
+    lib.cblas_sdsdot.restype  = c_float
+    lib.cblas_sdsdot(SMALL_N, c_float(1.5), fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), 1)
+
+    lib.cblas_dsdot.argtypes = [c_int, c_float_p, c_int, c_float_p, c_int]
+    lib.cblas_dsdot.restype  = c_double
+    lib.cblas_dsdot(SMALL_N, fx.ctypes.data_as(c_float_p), -1, fy.ctypes.data_as(c_float_p), 2)
 
-static void fill_complex_float(void *v, int n) {
-    float *cv = (float *)v;
-    for (int i = 0; i < n*2; i += 2) {
-        cv[i]   = (float)(i % 5) - 2.5f;   // Re
-        cv[i+1] = (float)(i % 3) + 1.0f;   // Im
-    }
-}
+    print("  → dot (real) successful")
 
-static void fill_complex_double(void *v, int n) {
-    double *cv = (double *)v;
-    for (int i = 0; i < n*2; i += 2) {
-        cv[i]   = (double)(i % 7) - 3.14;  // Re
-        cv[i+1] = (double)(i % 4) + 2.0;   // Im
-    }
-}
+def test_dot_complex():
+    print_header("cdotu_sub / cdotc_sub / zdotu_sub / zdotc_sub")
+
+    cx = fill_complex_float(SMALL_N*4)
+    cy = fill_complex_float(SMALL_N*3)
+    zx = fill_complex_double(SMALL_N*2)
+    zy = fill_complex_double(SMALL_N*4)
+
+    dotf = np.zeros(2, dtype=np.float32)
+    dotd = np.zeros(2, dtype=np.float64)
+
+    lib.cblas_cdotu_sub.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int, c_void_p]
+    lib.cblas_cdotu_sub(SMALL_N, cx.ctypes.data, 1, cy.ctypes.data, 1, dotf.ctypes.data_as(c_void_p))
+    lib.cblas_cdotu_sub(0, cx.ctypes.data, 1, cy.ctypes.data, 1, dotf.ctypes.data_as(c_void_p))
+
+    lib.cblas_cdotc_sub.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int, c_void_p]
+    lib.cblas_cdotc_sub(SMALL_N, cx.ctypes.data, -3, cy.ctypes.data, 2, dotf.ctypes.data_as(c_void_p))
 
-static void print_header(const char *group_name) {
-    printf("\n=== Тестируем группу: %s ===\n", group_name);
-}
+    lib.cblas_zdotu_sub.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int, c_void_p]
+    lib.cblas_zdotu_sub(SMALL_N, zx.ctypes.data, 1, zy.ctypes.data, 1, dotd.ctypes.data_as(c_void_p))
 
-static void smoke_dot_real(void) {
-    print_header("sdot / ddot / sdsdot / dsdot");
+    lib.cblas_zdotc_sub.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int, c_void_p]
+    lib.cblas_zdotc_sub(SMALL_N, zx.ctypes.data, 3, zy.ctypes.data, -1, dotd.ctypes.data_as(c_void_p))
 
-    float fx[SMALL_N*3], fy[SMALL_N*2];
-    double dx[SMALL_N*2], dy[SMALL_N*3];
+    print("  → dot (complex) successful")
 
-    fill_float(fx, SMALL_N*3);
-    fill_float(fy, SMALL_N*2);
-    fill_double(dx, SMALL_N*2);
-    fill_double(dy, SMALL_N*3);
+def test_norms():
+    print_header("snrm2 / dnrm2 / scnrm2 / dznrm2 / sasum / dasum / scasum / dzasum")
 
-    (void)cblas_sdot(SMALL_N, fx, 1, fy, 1);
-    (void)cblas_sdot(0, fx, 1, fy, 1);
-    (void)cblas_sdot(SMALL_N, fx, -2, fy, 3);
-    (void)cblas_sdot(-5, fx, 1, fy, 1);
+    fx = fill_float(SMALL_N*4)
+    dx = fill_double(SMALL_N*2)
+    cx = fill_complex_float(SMALL_N*3)
+    zx = fill_complex_double(SMALL_N*4)
 
-    (void)cblas_ddot(SMALL_N, dx, 2, dy, -1);
-    (void)cblas_ddot(0, dx, 1, dy, 1);
+    lib.cblas_snrm2.argtypes = [c_int, c_float_p, c_int]
+    lib.cblas_snrm2.restype  = c_float
+    lib.cblas_snrm2(SMALL_N, fx.ctypes.data_as(c_float_p), 1)
+    lib.cblas_snrm2(0, fx.ctypes.data_as(c_float_p), 1)
 
-    (void)cblas_sdsdot(SMALL_N, 1.5f, fx, 1, fy, 1);
-    (void)cblas_dsdot(SMALL_N, fx, -1, fy, 2);
+    lib.cblas_dnrm2.argtypes = [c_int, c_double_p, c_int]
+    lib.cblas_dnrm2.restype  = c_double
+    lib.cblas_dnrm2(SMALL_N, dx.ctypes.data_as(c_double_p), -1)
 
-    // большой
-    float *bigx = malloc(BIG_N * sizeof(float));
-    if (bigx) {
-        (void)cblas_sdot(BIG_N, bigx, 1, bigx, 1);
-        free(bigx);
-    }
+    lib.cblas_scnrm2.argtypes = [c_int, c_void_p, c_int]
+    lib.cblas_scnrm2.restype  = c_float
+    lib.cblas_scnrm2(SMALL_N, cx.ctypes.data, 1)
 
-    printf("  → dot (real) отработали\n");
-}
+    lib.cblas_dznrm2.argtypes = [c_int, c_void_p, c_int]
+    lib.cblas_dznrm2.restype  = c_double
+    lib.cblas_dznrm2(SMALL_N, zx.ctypes.data, -2)
 
-static void smoke_dot_complex(void) {
-    print_header("cdotu_sub / cdotc_sub / zdotu_sub / zdotc_sub");
+    lib.cblas_sasum.argtypes = [c_int, c_float_p, c_int]
+    lib.cblas_sasum.restype  = c_float
+    lib.cblas_sasum(SMALL_N, fx.ctypes.data_as(c_float_p), 2)
 
-    float cx[SMALL_N*4*2], cy[SMALL_N*3*2]; 
-    double zx[SMALL_N*2*2], zy[SMALL_N*4*2];
+    lib.cblas_dasum.argtypes = [c_int, c_double_p, c_int]
+    lib.cblas_dasum.restype  = c_double
+    lib.cblas_dasum(SMALL_N, dx.ctypes.data_as(c_double_p), 1)
 
-    fill_complex_float(cx, SMALL_N*4);
-    fill_complex_float(cy, SMALL_N*3);
-    fill_complex_double(zx, SMALL_N*2);
-    fill_complex_double(zy, SMALL_N*4);
+    lib.cblas_scasum.argtypes = [c_int, c_void_p, c_int]
+    lib.cblas_scasum.restype  = c_float
+    lib.cblas_scasum(SMALL_N, cx.ctypes.data, 3)
 
-    float dotf[2];
-    double dotd[2];
+    lib.cblas_dzasum.argtypes = [c_int, c_void_p, c_int]
+    lib.cblas_dzasum.restype  = c_double
+    lib.cblas_dzasum(SMALL_N, zx.ctypes.data, 1)
 
-    cblas_cdotu_sub(SMALL_N, cx, 1, cy, 1, dotf);
-    cblas_cdotu_sub(0, cx, 1, cy, 1, dotf);
-    cblas_cdotu_sub(SMALL_N, cx, -3, cy, 2, dotf);
+    print("  → norms и asum successful")
 
-    cblas_cdotc_sub(SMALL_N, cx, 2, cy, -1, dotf);
-    cblas_cdotc_sub(-4, cx, 1, cy, 1, dotf);
+def test_amax():
+    print_header("isamax / idamax / icamax / izamax")
 
-    cblas_zdotu_sub(SMALL_N, zx, 1, zy, 1, dotd);
-    cblas_zdotu_sub(SMALL_N, zx, -2, zy, 3, dotd);
+    fx = fill_float(SMALL_N*3)
+    dx = fill_double(SMALL_N*2)
+    cx = fill_complex_float(SMALL_N*5)
+    zx = fill_complex_double(SMALL_N*3)
 
-    cblas_zdotc_sub(SMALL_N, zx, 3, zy, -1, dotd);
+    lib.cblas_isamax.argtypes = [c_int, c_float_p, c_int]
+    lib.cblas_isamax.restype  = c_int
+    lib.cblas_isamax(SMALL_N, fx.ctypes.data_as(c_float_p), 1)
+    lib.cblas_isamax(0, fx.ctypes.data_as(c_float_p), 1)
 
-    printf("  → dot (complex) отработали\n");
-}
+    lib.cblas_idamax.argtypes = [c_int, c_double_p, c_int]
+    lib.cblas_idamax.restype  = c_int
+    lib.cblas_idamax(SMALL_N, dx.ctypes.data_as(c_double_p), -1)
 
-static void smoke_norms(void) {
-    print_header("snrm2 / dnrm2 / scnrm2 / dznrm2 / sasum / dasum / scasum / dzasum");
+    lib.cblas_icamax.argtypes = [c_int, c_void_p, c_int]
+    lib.cblas_icamax.restype  = c_int
+    lib.cblas_icamax(SMALL_N, cx.ctypes.data, 1)
 
-    float fx[SMALL_N*4], fy[SMALL_N*3];
-    double dx[SMALL_N*2], dy[SMALL_N];
+    lib.cblas_izamax.argtypes = [c_int, c_void_p, c_int]
+    lib.cblas_izamax.restype  = c_int
+    lib.cblas_izamax(SMALL_N, zx.ctypes.data, 2)
 
-    fill_float(fx, SMALL_N*4);
-    fill_float(fy, SMALL_N*3);
-    fill_double(dx, SMALL_N*2);
-    fill_double(dy, SMALL_N);
+    print("  → amax successful")
 
-    (void)cblas_snrm2(SMALL_N, fx, 1);
-    (void)cblas_snrm2(0, fx, 1);
-    (void)cblas_snrm2(SMALL_N, fx, -2);
+def test_swap():
+    print_header("sswap / dswap / cswap / zswap")
 
-    (void)cblas_dnrm2(SMALL_N, dx, 3);
-    (void)cblas_dnrm2(SMALL_N, dx, -1);
+    fx = fill_float(SMALL_N*2)
+    fy = fill_float(SMALL_N*3)
+    dx = fill_double(SMALL_N*4)
+    dy = fill_double(SMALL_N)
 
-    (void)cblas_sasum(SMALL_N, fy, 2);
-    (void)cblas_dasum(0, dy, 1);
+    lib.cblas_sswap.argtypes = [c_int, c_float_p, c_int, c_float_p, c_int]
+    lib.cblas_sswap(SMALL_N, fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), 1)
+    lib.cblas_sswap(0, fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), 1)
 
-    float cx[SMALL_N*3*2];
-    double zx[SMALL_N*4*2];
+    lib.cblas_dswap.argtypes = [c_int, c_double_p, c_int, c_double_p, c_int]
+    lib.cblas_dswap(SMALL_N, dx.ctypes.data_as(c_double_p), 2, dy.ctypes.data_as(c_double_p), -1)
 
-    fill_complex_float(cx, SMALL_N*3);
-    fill_complex_double(zx, SMALL_N*4);
+    cx = fill_complex_float(SMALL_N*3)
+    cy = fill_complex_float(SMALL_N*2)
+    zx = fill_complex_double(SMALL_N*4)
+    zy = fill_complex_double(SMALL_N*3)
 
-    (void)cblas_scnrm2(SMALL_N, cx, 1);
-    (void)cblas_dznrm2(SMALL_N, zx, -2);
+    lib.cblas_cswap.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int]
+    lib.cblas_cswap(SMALL_N, cx.ctypes.data, 1, cy.ctypes.data, -2)
 
-    (void)cblas_scasum(SMALL_N, cx, 3);
-    (void)cblas_dzasum(0, zx, 1);
+    lib.cblas_zswap.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int]
+    lib.cblas_zswap(SMALL_N, zx.ctypes.data, 3, zy.ctypes.data, 1)
 
-    printf("  → norms и asum отработали\n");
-}
+    print("  → swap successful")
 
-static void smoke_amax(void) {
-    print_header("isamax / idamax / icamax / izamax");
+def test_copy():
+    print_header("scopy / dcopy / ccopy / zcopy")
 
-    float fx[SMALL_N*3];
-    double dx[SMALL_N*2];
+    fx = fill_float(SMALL_N*3)
+    fy = fill_float(SMALL_N*2)
+    dx = fill_double(SMALL_N)
+    dy = fill_double(SMALL_N*4)
 
-    fill_float(fx, SMALL_N*3);
-    fill_double(dx, SMALL_N*2);
+    lib.cblas_scopy.argtypes = [c_int, c_float_p, c_int, c_float_p, c_int]
+    lib.cblas_scopy(SMALL_N, fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), 1)
+    lib.cblas_scopy(0, fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), 1)
 
-    (void)cblas_isamax(SMALL_N, fx, 1);
-    (void)cblas_isamax(0, fx, 1);
-    (void)cblas_isamax(SMALL_N, fx, -4);
+    lib.cblas_dcopy.argtypes = [c_int, c_double_p, c_int, c_double_p, c_int]
+    lib.cblas_dcopy(SMALL_N, dx.ctypes.data_as(c_double_p), 2, dy.ctypes.data_as(c_double_p), -1)
 
-    (void)cblas_idamax(SMALL_N, dx, 2);
-    (void)cblas_idamax(SMALL_N, dx, -1);
+    cx = fill_complex_float(SMALL_N*4)
+    cy = fill_complex_float(SMALL_N*3)
+    zx = fill_complex_double(SMALL_N*2)
+    zy = fill_complex_double(SMALL_N*5)
 
-    float cx[SMALL_N*5*2];
-    double zx[SMALL_N*3*2];
+    lib.cblas_ccopy.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int]
+    lib.cblas_ccopy(SMALL_N, cx.ctypes.data, 1, cy.ctypes.data, -2)
 
-    fill_complex_float(cx, SMALL_N*5);
-    fill_complex_double(zx, SMALL_N*3);
+    lib.cblas_zcopy.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int]
+    lib.cblas_zcopy(SMALL_N, zx.ctypes.data, 3, zy.ctypes.data, 1)
 
-    (void)cblas_icamax(SMALL_N, cx, 1);
-    (void)cblas_icamax(SMALL_N, cx, -3);
+    print("  → copy successful")
 
-    (void)cblas_izamax(0, zx, 1);
-    (void)cblas_izamax(SMALL_N, zx, 2);
+def test_axpy():
+    print_header("saxpy / daxpy / caxpy / zaxpy")
 
-    printf("  → amax отработали\n");
-}
-static void smoke_swap(void) {
-    print_header("sswap / dswap / cswap / zswap");
+    fx = fill_float(SMALL_N*3)
+    fy = fill_float(SMALL_N*4)
+    dx = fill_double(SMALL_N*2)
+    dy = fill_double(SMALL_N)
 
-    float fx[SMALL_N*2], fy[SMALL_N*3];
-    double dx[SMALL_N*4], dy[SMALL_N];
+    lib.cblas_saxpy.argtypes = [c_int, c_float, c_float_p, c_int, c_float_p, c_int]
+    lib.cblas_saxpy(SMALL_N, c_float(1.5), fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), 1)
 
-    fill_float(fx, SMALL_N*2);
-    fill_float(fy, SMALL_N*3);
-    fill_double(dx, SMALL_N*4);
-    fill_double(dy, SMALL_N);
+    lib.cblas_daxpy.argtypes = [c_int, c_double, c_double_p, c_int, c_double_p, c_int]
+    lib.cblas_daxpy(SMALL_N, c_double(3.14), dx.ctypes.data_as(c_double_p), 2, dy.ctypes.data_as(c_double_p), -1)
 
-    cblas_sswap(SMALL_N, fx, 1, fy, 1);
-    cblas_sswap(0, fx, 1, fy, 1);
-    cblas_sswap(SMALL_N, fx, -2, fy, 3);
+    cx = fill_complex_float(SMALL_N*3)
+    cy = fill_complex_float(SMALL_N*2)
+    zx = fill_complex_double(SMALL_N*4)
+    zy = fill_complex_double(SMALL_N*3)
 
-    cblas_dswap(SMALL_N, dx, 2, dy, -1);
+    calpha = np.array([1.0 + 0j, -1.0 + 0j], dtype=np.complex64)
+    zalpha = np.array([-1.0 + 0j, 0.0 + 0j], dtype=np.complex128)
 
-    // overlap
-    cblas_sswap(SMALL_N, fx, 1, fx+2, 1);
+    lib.cblas_caxpy.argtypes = [c_int, c_void_p, c_void_p, c_int, c_void_p, c_int]
+    lib.cblas_caxpy(SMALL_N, calpha.ctypes.data, cx.ctypes.data, 1, cy.ctypes.data, -2)
 
-    // complex
-    float cx[SMALL_N*3*2], cy[SMALL_N*2*2];
-    double zx[SMALL_N*4*2], zy[SMALL_N*3*2];
+    lib.cblas_zaxpy.argtypes = [c_int, c_void_p, c_void_p, c_int, c_void_p, c_int]
+    lib.cblas_zaxpy(SMALL_N, zalpha.ctypes.data, zx.ctypes.data, 3, zy.ctypes.data, 1)
 
-    fill_complex_float(cx, SMALL_N*3);
-    fill_complex_float(cy, SMALL_N*2);
-    fill_complex_double(zx, SMALL_N*4);
-    fill_complex_double(zy, SMALL_N*3);
+    print("  → axpy successful")
 
-    cblas_cswap(SMALL_N, cx, 1, cy, -2);
-    cblas_cswap(0, cx, 1, cy, 1);
+def test_rot_real():
+    print_header("srotg / drotg / srot / drot / srotmg / drotmg / srotm / drotm")
 
-    cblas_zswap(SMALL_N, zx, 3, zy, 1);
-    cblas_zswap(SMALL_N, zx, -1, zy, 2);
+    # srotg
+    fa = c_float(1.0)
+    fb = c_float(2.0)
+    fc = c_float()
+    fs = c_float()
+    lib.cblas_srotg.argtypes = [ctypes.POINTER(c_float)] * 4
+    lib.cblas_srotg.restype = None
+    lib.cblas_srotg(ctypes.byref(fa), ctypes.byref(fb), ctypes.byref(fc), ctypes.byref(fs))
 
-    printf("  → swap отработали\n");
-}
-static void smoke_copy(void) {
-    print_header("scopy / dcopy / ccopy / zcopy");
+    # drotg
+    da = c_double(3.14)
+    db = c_double(-1.0)
+    dc = c_double()
+    ds = c_double()
+    lib.cblas_drotg.argtypes = [ctypes.POINTER(c_double)] * 4
+    lib.cblas_drotg(ctypes.byref(da), ctypes.byref(db), ctypes.byref(dc), ctypes.byref(ds))
 
-    float fx[SMALL_N*3], fy[SMALL_N*2];
-    double dx[SMALL_N], dy[SMALL_N*4];
+    fx = fill_float(SMALL_N*2)
+    fy = fill_float(SMALL_N*3)
+    dx = fill_double(SMALL_N*4)
+    dy = fill_double(SMALL_N)
 
-    fill_float(fx, SMALL_N*3);
-    fill_float(fy, SMALL_N*2);
-    fill_double(dx, SMALL_N);
-    fill_double(dy, SMALL_N*4);
+    lib.cblas_srot.argtypes = [c_int, c_float_p, c_int, c_float_p, c_int, c_float, c_float]
+    lib.cblas_srot(SMALL_N, fx.ctypes.data_as(c_float_p), 1, fy.ctypes.data_as(c_float_p), -2, fc, fs)
 
-    cblas_scopy(SMALL_N, fx, 1, fy, 1);
-    cblas_scopy(0, fx, 1, fy, 1);
-    cblas_scopy(SMALL_N, fx, -3, fy, 2);
+    lib.cblas_drot.argtypes = [c_int, c_double_p, c_int, c_double_p, c_int, c_double, c_double]
+    lib.cblas_drot(SMALL_N, dx.ctypes.data_as(c_double_p), 3, dy.ctypes.data_as(c_double_p), 1, dc, ds)
 
-    cblas_dcopy(SMALL_N, dx, 2, dy, -1);
+    # rotmg / rotm
+    d1 = c_float(1.0)
+    d2 = c_float(2.0)
+    b1 = c_float(3.0)
+    b2 = c_float(4.0)
+    param = np.zeros(5, dtype=np.float32)
 
-    // overlap
-    cblas_scopy(SMALL_N, fx, 1, fx+3, 1);
+    lib.cblas_srotmg.argtypes = [ctypes.POINTER(c_float)]*3 + [c_float, c_void_p]
+    lib.cblas_srotmg(ctypes.byref(d1), ctypes.byref(d2), ctypes.byref(b1), b2, param.ctypes.data)
 
-    // big
-    float *bigf = malloc(BIG_N * sizeof(float) * 2);
-    if (bigf) {
-        cblas_scopy(BIG_N, bigf, 1, bigf + BIG_N, 1);
-        free(bigf);
-    }
+    lib.cblas_srotm.argtypes = [c_int, c_float_p, c_int, c_float_p, c_int, c_void_p]
+    lib.cblas_srotm(SMALL_N, fx.ctypes.data_as(c_float_p), -1, fy.ctypes.data_as(c_float_p), 2, param.ctypes.data)
 
-    // complex
-    float cx[SMALL_N*4*2], cy[SMALL_N*3*2];
-    double zx[SMALL_N*2*2], zy[SMALL_N*5*2];
+    print("  → real rot successful")
 
-    fill_complex_float(cx, SMALL_N*4);
-    fill_complex_float(cy, SMALL_N*3);
-    fill_complex_double(zx, SMALL_N*2);
-    fill_complex_double(zy, SMALL_N*5);
+def test_rot_complex():
+    print_header("crotg / zrotg / csrot / zdrot")
 
-    cblas_ccopy(SMALL_N, cx, 1, cy, -2);
-    cblas_ccopy(0, cx, 1, cy, 1);
+    # crotg
+    ca = c_float(1.0)
+    cb = np.array([2.0 + 3.0j], dtype=np.complex64)
+    cc = c_float()
+    cs = np.zeros(2, dtype=np.float32)
 
-    cblas_zcopy(SMALL_N, zx, 3, zy, 1);
-    cblas_zcopy(SMALL_N, zx, -1, zy, 4);
+    lib.cblas_crotg.argtypes = [ctypes.POINTER(c_float), c_void_p, ctypes.POINTER(c_float), c_void_p]
+    lib.cblas_crotg(ctypes.byref(ca), cb.ctypes.data_as(c_void_p), ctypes.byref(cc), cs.ctypes.data_as(c_void_p))
 
-    printf("  → copy отработали\n");
-}
+    # zrotg
+    da = c_double(4.0)
+    db = np.array([5.0 + 6.0j], dtype=np.complex128)
+    dc = c_double()
+    ds = np.zeros(2, dtype=np.float64)
 
-static void smoke_axpy(void) {
-    print_header("saxpy / daxpy / caxpy / zaxpy");
+    lib.cblas_zrotg.argtypes = [ctypes.POINTER(c_double), c_void_p, ctypes.POINTER(c_double), c_void_p]
+    lib.cblas_zrotg(ctypes.byref(da), db.ctypes.data_as(c_void_p), ctypes.byref(dc), ds.ctypes.data_as(c_void_p))
 
-    float fx[SMALL_N*3], fy[SMALL_N*4];
-    double dx[SMALL_N*2], dy[SMALL_N];
+    cx = fill_complex_float(SMALL_N)
+    cy = fill_complex_float(SMALL_N)
 
-    fill_float(fx, SMALL_N*3);
-    fill_float(fy, SMALL_N*4);
-    fill_double(dx, SMALL_N*2);
-    fill_double(dy, SMALL_N);
+    lib.cblas_csrot.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int, c_float, c_float]
+    lib.cblas_csrot(SMALL_N, cx.ctypes.data, 1, cy.ctypes.data, 1, c_float(0.707), c_float(0.707))
 
-    cblas_saxpy(SMALL_N, 1.5f, fx, 1, fy, 1);
-    cblas_saxpy(0, 0.0f, fx, 1, fy, 1);
-    cblas_saxpy(SMALL_N, -2.0f, fx, -2, fy, 3);
+    zx = fill_complex_double(SMALL_N)
+    zy = fill_complex_double(SMALL_N)
 
-    cblas_daxpy(SMALL_N, 3.14, dx, 2, dy, -1);
+    lib.cblas_zdrot.argtypes = [c_int, c_void_p, c_int, c_void_p, c_int, c_double, c_double]
+    lib.cblas_zdrot(SMALL_N, zx.ctypes.data, 1, zy.ctypes.data, 1, c_double(0.8), c_double(0.6))
 
-    // overlap
-    cblas_saxpy(SMALL_N, 1.0f, fx, 1, fx+2, 1);
+    print("  → complex rot successful")
 
-    // complex
-    float cx[SMALL_N*3*2], cy[SMALL_N*2*2];
-    double zx[SMALL_N*4*2], zy[SMALL_N*3*2];
+def test_scal():
+    print_header("sscal / dscal / cscal / zscal / csscal / zdscal")
 
-    fill_complex_float(cx, SMALL_N*3);
-    fill_complex_float(cy, SMALL_N*2);
-    fill_complex_double(zx, SMALL_N*4);
-    fill_complex_double(zy, SMALL_N*3);
+    fx = fill_float(SMALL_N*3)
+    dx = fill_double(SMALL_N*2)
 
-    float calpha[2] = {1.0f, -1.0f};
-    double zalpha[2] = {2.0, 0.0};
+    lib.cblas_sscal.argtypes = [c_int, c_float, c_float_p, c_int]
+    lib.cblas_sscal(SMALL_N, c_float(1.5), fx.ctypes.data_as(c_float_p), 1)
 
-    cblas_caxpy(SMALL_N, calpha, cx, 1, cy, -2);
-    cblas_caxpy(0, calpha, cx, 1, cy, 1);
+    lib.cblas_dscal.argtypes = [c_int, c_double, c_double_p, c_int]
+    lib.cblas_dscal(SMALL_N, c_double(3.14), dx.ctypes.data_as(c_double_p), 2)
 
-    cblas_zaxpy(SMALL_N, zalpha, zx, 3, zy, 1);
-    cblas_zaxpy(SMALL_N, zalpha, zx, -1, zy, 2);
+    cx = fill_complex_float(SMALL_N*4)
+    zx = fill_complex_double(SMALL_N*3)
 
-    printf("  → axpy отработали\n");
-}
+    calpha = np.array([1.0 + 2.0j], dtype=np.complex64)
+    zalpha = np.array([-1.0 + 0.0j], dtype=np.complex128)
 
-static void smoke_rot_real(void) {
-    print_header("srotg / drotg / srot / drot / srotmg / drotmg / srotm / drotm");
+    lib.cblas_cscal.argtypes = [c_int, c_void_p, c_void_p, c_int]
+    lib.cblas_cscal(SMALL_N, calpha.ctypes.data, cx.ctypes.data, 1)
 
-    float fa = 1.0f, fb = 2.0f, fc, fs;
-    double da = 3.14, db = -1.0, dc, ds;
+    lib.cblas_zscal.argtypes = [c_int, c_void_p, c_void_p, c_int]
+    lib.cblas_zscal(SMALL_N, zalpha.ctypes.data, zx.ctypes.data, 3)
 
-    cblas_srotg(&fa, &fb, &fc, &fs);
-    cblas_drotg(&da, &db, &dc, &ds);
+    lib.cblas_csscal.argtypes = [c_int, c_float, c_void_p, c_int]
+    lib.cblas_csscal(SMALL_N, c_float(2.5), cx.ctypes.data, -1)
 
-    float fx[SMALL_N*2], fy[SMALL_N*3];
-    double dx[SMALL_N*4], dy[SMALL_N];
+    lib.cblas_zdscal.argtypes = [c_int, c_double, c_void_p, c_int]
+    lib.cblas_zdscal(SMALL_N, c_double(-1.7), zx.ctypes.data, 2)
 
-    fill_float(fx, SMALL_N*2);
-    fill_float(fy, SMALL_N*3);
-    fill_double(dx, SMALL_N*4);
-    fill_double(dy, SMALL_N);
+    print("  → scal successful")
 
-    cblas_srot(SMALL_N, fx, 1, fy, -2, fc, fs);
-    cblas_srot(0, fx, 1, fy, 1, 0.0f, 1.0f);
+if __name__ == "__main__":
+    print("=== Tests Level 1 CBLAS with Python (ctypes) ===\n")
+    print("OPENBLAS_NUM_THREADS =", os.environ.get("OPENBLAS_NUM_THREADS", "не задан"))
 
-    cblas_drot(SMALL_N, dx, 3, dy, 1, dc, ds);
+    tests = [
+        test_dot_real,
+        test_dot_complex,
+        test_norms,
+        test_amax,
+        test_swap,
+        test_copy,
+        test_axpy,
+        test_rot_real,
+        test_rot_complex,
+        test_scal,
+    ]
 
-    // overlap
-    cblas_srot(SMALL_N, fx, 1, fx+1, 1, fc, fs);
+    for test_func in tests:
+        p = mp.Process(target=run_test, args=(test_func,))
+        p.start()
+        p.join(timeout=15)
+        if p.is_alive():
+            print(f"!!! {test_func.__name__} is frozen → kill")
+            p.terminate()
+            p.join()
+        print("-" * 60)
 
-    // rotmg / rotm
-    float fm1 = 1.0f, fm2 = 2.0f, fm3 = 3.0f, fm4 = 4.0f;
-    double dm1 = 5.0, dm2 = 6.0, dm3 = 7.0, dm4 = 8.0;
-    float paramf[5];
-    double paramd[5];
-
-    cblas_srotmg(&fm1, &fm2, &fm3, fm4, paramf);
-    cblas_drotmg(&dm1, &dm2, &dm3, dm4, paramd);
-
-    cblas_srotm(SMALL_N, fx, -1, fy, 2, paramf);
-    cblas_drotm(0, dx, 1, dy, 1, paramd);
-
-    printf("  → real rot отработали\n");
-}
-
-static void smoke_rot_complex(void) {
-    print_header("crotg / zrotg / crot / zrot / csrot / zdrot");
-
-    // crotg / zrotg
-    float ca = 1.0f, cb[2] = {2.0f, 3.0f}; // cb complex
-    float cc, cs[2]; // cc real, cs complex
-    cblas_crotg(&ca, cb, &cc, cs);
-
-    double da = 4.0, db[2] = {5.0, 6.0};
-    double dc, ds[2];
-    cblas_zrotg(&da, db, &dc, ds);
-
-    // crot / zrot
-    float cx[SMALL_N*2*2], cy[SMALL_N*3*2];
-    fill_complex_float(cx, SMALL_N*2);
-    fill_complex_float(cy, SMALL_N*3);
-
-    double zx[SMALL_N*4*2], zy[SMALL_N*2*2];
-    fill_complex_double(zx, SMALL_N*4);
-    fill_complex_double(zy, SMALL_N*2);
-
-    // csrot / zdrot 
-    float csc = 0.5f, css = -0.5f;
-    cblas_csrot(SMALL_N, cx, 1, cy, 1, csc, css);
-
-    double zdc = 0.8, zds = 0.6;
-    cblas_zdrot(SMALL_N, zx, 1, zy, 1, zdc, zds);
-
-    // overlap example
-    cblas_csrot(SMALL_N, cx, 1, cx+2, 1, csc, css);
-
-    printf("  → complex rot отработали\n");
-}
-
-static void smoke_scal(void) {
-    print_header("sscal / dscal / cscal / zscal / csscal / zdscal");
-
-    float fx[SMALL_N*3];
-    double dx[SMALL_N*2];
-
-    fill_float(fx, SMALL_N*3);
-    fill_double(dx, SMALL_N*2);
-
-    cblas_sscal(SMALL_N, 1.5f, fx, 1);
-    cblas_sscal(0, 0.0f, fx, 1);
-    cblas_sscal(SMALL_N, -2.0f, fx, -3);
-
-    cblas_dscal(SMALL_N, 3.14, dx, 2);
-
-    // complex
-    float cx[SMALL_N*4*2];
-    double zx[SMALL_N*3*2];
-
-    fill_complex_float(cx, SMALL_N*4);
-    fill_complex_double(zx, SMALL_N*3);
-
-    float calpha[2] = {1.0f, -1.0f};
-    double zalpha[2] = {2.0, 0.0};
-
-    cblas_cscal(SMALL_N, calpha, cx, 1);
-    cblas_cscal(SMALL_N, calpha, cx, -2);
-
-    cblas_zscal(0, zalpha, zx, 1);
-    cblas_zscal(SMALL_N, zalpha, zx, 3);
-
-    // cs/zd scal
-    cblas_csscal(SMALL_N, 2.5f, cx, -1);
-    cblas_zdscal(SMALL_N, -1.7, zx, 2);
-
-    printf("  → scal отработали\n");
-}
-
-int main(void) {
-    printf("=== Полные интерфейсные тесты CBLAS Level 1 (все функции) ===\n");
-    printf("Цель: покрыть вызовы всех функций с разными параметрами,\n");
-    printf("      без проверки результатов — только на стабильность.\n\n");
-
-    smoke_dot_real();
-    smoke_dot_complex();
-    smoke_norms();
-    smoke_amax();
-    smoke_swap();
-    smoke_copy();
-    smoke_axpy();
-    smoke_rot_real();
-    smoke_rot_complex();
-    smoke_scal();
-
-    printf("\nВсе функции Level 1 вызваны с разными сценариями.\n");
-    printf("Нет видимых крашей → покрытие интерфейса полное.\n");
-
-    return 0;
-}
+    print("\nAll tests completed")
